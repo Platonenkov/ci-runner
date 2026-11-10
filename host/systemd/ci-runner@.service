@@ -1,0 +1,18 @@
+[Unit]
+Description=GitHub Actions runner slot %i
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/opt/ci-runner/host/run-slot.sh %i
+# A job in progress gets time to finish its current step and report; the runner then exits.
+ExecStop=/usr/bin/docker stop -t 120 ci-%i
+TimeoutStopSec=150
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

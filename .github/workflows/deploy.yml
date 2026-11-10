@@ -1,0 +1,109 @@
+name: deploy
+
+# Deploys the runner host of one GitHub environment, or shows its status. Each host is an environment created by
+# scripts/bootstrap: secrets SSH_HOST, SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS and variables SLOTS, SLOT_MEMORY,
+# DOCKER_CACHE_LIMIT_MB. RUNNER_TOKEN is a repository secret, or an environment secret to override it per host.
+#
+# Runs on a GitHub-hosted runner: a host cannot deploy itself, and a public repository must never run on the
+# self-hosted runners. Only a manual run starts it, so a pull request from a fork never gets these secrets. The
+# logs are public: GitHub masks the secret values, and nothing here prints the address or the token another way.
+on:
+  workflow_dispatch:
+    inputs:
+      server:
+        description: Environment of the runner host (Settings > Environments)
+        required: true
+        type: string
+      action:
+        description: deploy installs and starts the slots; status only reports
+        required: true
+        type: choice
+        default: deploy
+        options:
+          - deploy
+          - status
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.server }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: ${{ inputs.action }} ${{ inputs.server }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.server }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+
+      # Values set from Windows may carry CR or a trailing newline; ssh rejects a key or known_hosts line with CR.
+      - name: Configure SSH
+        env:
+          SERVER: ${{ inputs.server }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          for name in SSH_HOST SSH_PRIVATE_KEY SSH_KNOWN_HOSTS; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is not set in environment $SERVER; run scripts/bootstrap for this host."
+              exit 1
+            fi
+          done
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          host="$(printf '%s' "$SSH_HOST" | tr -d '\r\n[:space:]')"
+          cat > ~/.ssh/config <<EOF
+          Host runner-host
+            HostName $host
+            User root
+            IdentityFile ~/.ssh/id_ed25519
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            BatchMode yes
+            LogLevel ERROR
+            ServerAliveInterval 30
+          EOF
+          ssh runner-host true
+
+      - name: Write configuration and token
+        if: inputs.action == 'deploy'
+        env:
+          RUNNER_TOKEN: ${{ secrets.RUNNER_TOKEN }}
+          SLOTS: ${{ vars.SLOTS }}
+          SLOT_MEMORY: ${{ vars.SLOT_MEMORY }}
+          DOCKER_CACHE_LIMIT_MB: ${{ vars.DOCKER_CACHE_LIMIT_MB }}
+        run: |
+          set -Eeuo pipefail
+          {
+            cat config/defaults.env
+            echo "# Environment variables of ${GITHUB_REPOSITORY}, run ${GITHUB_RUN_ID}."
+            for name in SLOTS SLOT_MEMORY DOCKER_CACHE_LIMIT_MB; do
+              if [ -n "${!name}" ]; then
+                echo "${name}=${!name}"
+              fi
+            done
+          } | ssh runner-host 'install -d -m 0700 /etc/ci-runner && install -m 0600 /dev/stdin /etc/ci-runner/runner.env'
+          if [ -n "$RUNNER_TOKEN" ]; then
+            printf '%s' "$RUNNER_TOKEN" | tr -d '\r\n' \
+              | ssh runner-host 'install -m 0600 /dev/stdin /etc/ci-runner/token'
+          else
+            echo "::warning::RUNNER_TOKEN is not set; the host is installed, but its slots do not start."
+          fi
+
+      - name: Install
+        if: inputs.action == 'deploy'
+        run: |
+          set -Eeuo pipefail
+          tar -cf - image host \
+            | ssh runner-host 'rm -rf /opt/ci-runner-src && mkdir -p /opt/ci-runner-src && tar -xf - -C /opt/ci-runner-src'
+          ssh runner-host 'bash /opt/ci-runner-src/host/install.sh'
+
+      - name: Status
+        run: ssh runner-host /opt/ci-runner/host/status.sh

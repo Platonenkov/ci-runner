@@ -1,0 +1,9 @@
+[Unit]
+Description=Rebuild the GitHub Actions runner image
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/ci-runner/host/build-image.sh

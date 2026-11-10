@@ -1,0 +1,4 @@
+# Host addresses and deploy keys stay on the administrator's machine; GitHub gets them as environment secrets.
+servers/*.env
+!servers/example.env
+.local/
