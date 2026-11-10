@@ -38,5 +38,7 @@ if (( used_mb > cache_limit_mb )); then
 fi
 
 cd /home/runner/actions-runner
-sudo -u runner --preserve-env=RUNNER_TOOL_CACHE,AGENT_TOOLSDIRECTORY,DOTNET_ROOT,DOTNET_NOLOGO,DOTNET_CLI_TELEMETRY_OPTOUT,ImageOS \
-  ./run.sh --jitconfig "$RUNNER_JITCONFIG"
+# sudo applies pam_umask, which with USERGROUPS_ENAB gives umask 0002; the hosted runner uses 0022, and tests
+# that check the mode of created files and directories fail on 0775 instead of 0755.
+sudo -u runner --preserve-env=LANG,RUNNER_TOOL_CACHE,AGENT_TOOLSDIRECTORY,DOTNET_ROOT,DOTNET_NOLOGO,DOTNET_CLI_TELEMETRY_OPTOUT,ImageOS \
+  bash -c 'umask 0022 && exec ./run.sh --jitconfig "$1"' run "$RUNNER_JITCONFIG"
