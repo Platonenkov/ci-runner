@@ -39,7 +39,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Values set from Windows may carry CR or a trailing newline; ssh rejects a key or known_hosts line with CR.
+      # Values set from Windows may carry a UTF-8 BOM, CR or a trailing newline; ssh rejects a key or a known_hosts
+      # line with either.
       - name: Configure SSH
         env:
           SERVER: ${{ inputs.server }}
@@ -55,10 +56,11 @@ jobs:
             fi
           done
           install -d -m 0700 ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_ed25519
-          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
+          clean() { sed '1s/^\xEF\xBB\xBF//' | tr -d '\r'; }
+          printf '%s\n' "$SSH_PRIVATE_KEY" | clean > ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | clean > ~/.ssh/known_hosts
           chmod 0600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
-          host="$(printf '%s' "$SSH_HOST" | tr -d '\r\n[:space:]')"
+          host="$(printf '%s' "$SSH_HOST" | clean | tr -d '\n[:space:]')"
           cat > ~/.ssh/config <<EOF
           Host runner-host
             HostName $host
@@ -91,7 +93,7 @@ jobs:
             done
           } | ssh runner-host 'install -d -m 0700 /etc/ci-runner && install -m 0600 /dev/stdin /etc/ci-runner/runner.env'
           if [ -n "$RUNNER_TOKEN" ]; then
-            printf '%s' "$RUNNER_TOKEN" | tr -d '\r\n' \
+            printf '%s' "$RUNNER_TOKEN" | sed '1s/^\xEF\xBB\xBF//' | tr -d '\r\n' \
               | ssh runner-host 'install -m 0600 /dev/stdin /etc/ci-runner/token'
           else
             echo "::warning::RUNNER_TOKEN is not set; the host is installed, but its slots do not start."

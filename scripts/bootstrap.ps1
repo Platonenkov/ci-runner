@@ -39,8 +39,9 @@ $target = "$SshUser@$Address"
 New-Item -ItemType Directory -Force $dir | Out-Null
 
 function Invoke-Remote([string] $Arguments) {
-    # The script travels on stdin; tr drops the CR that PowerShell appends to piped text.
-    Get-Content -Raw -ErrorAction Stop $remoteScript | ssh $target "tr -d '\r' | bash -s -- $Arguments"
+    # The script travels on stdin. Windows PowerShell 5.1 may prefix piped text with a UTF-8 BOM whatever
+    # $OutputEncoding says and appends CRLF, so both are removed on the host.
+    Get-Content -Raw -ErrorAction Stop $remoteScript | ssh $target "sed '1s/^\xEF\xBB\xBF//' | tr -d '\r' | bash -s -- $Arguments"
     if ($LASTEXITCODE -ne 0) { throw "bootstrap-remote.sh $Arguments failed ($LASTEXITCODE)" }
 }
 
@@ -119,10 +120,11 @@ Write-Host ''
 Write-Host "== Setting environment '$Name' in $Repo"
 gh api -X PUT "repos/$Repo/environments/$Name" --silent
 if ($LASTEXITCODE -ne 0) { throw "Creating the environment failed ($LASTEXITCODE)" }
-# Values go through stdin, so the private key is never on a command line.
-$Address | gh secret set SSH_HOST --env $Name -R $Repo
-Get-Content -Raw $key | gh secret set SSH_PRIVATE_KEY --env $Name -R $Repo
-Get-Content -Raw $knownHosts | gh secret set SSH_KNOWN_HOSTS --env $Name -R $Repo
+# Files go to gh through cmd redirection: the bytes arrive unchanged (a PowerShell pipe may add a BOM), and the
+# private key is never on a command line.
+gh secret set SSH_HOST --env $Name -R $Repo --body $Address
+cmd /c "gh secret set SSH_PRIVATE_KEY --env $Name -R $Repo < `"$key`""
+cmd /c "gh secret set SSH_KNOWN_HOSTS --env $Name -R $Repo < `"$knownHosts`""
 gh variable set SLOTS --env $Name -R $Repo --body "$slots"
 gh variable set SLOT_MEMORY --env $Name -R $Repo --body '7g'
 gh variable set DOCKER_CACHE_LIMIT_MB --env $Name -R $Repo --body "$cacheMb"
