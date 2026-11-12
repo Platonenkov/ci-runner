@@ -50,6 +50,21 @@ RUN useradd -m -u 1001 -s /bin/bash runner \
  && mkdir -p /opt/hostedtoolcache \
  && chown -R runner:runner /opt/hostedtoolcache /usr/share/dotnet
 
+# setup-node looks in the tool cache before downloading, and its download comes from GitHub release assets in
+# Azure Blob Storage, which some hosting networks reach at a fraction of their bandwidth (a 10-minute stall
+# cancelled a job on 2026-11-12). The latest release of each major goes into the cache here, from nodejs.org;
+# the weekly image rebuild keeps it current. A workflow asking for another major still downloads it.
+ARG NODE_TOOLCACHE_MAJORS="24 22"
+RUN for major in ${NODE_TOOLCACHE_MAJORS}; do \
+      version="$(curl -fsSL https://nodejs.org/dist/index.json | jq -r --arg m "v${major}." '[.[] | select(.version | startswith($m))][0].version | ltrimstr("v")')" \
+   && dir="/opt/hostedtoolcache/node/${version}/x64" \
+   && mkdir -p "$dir" \
+   && curl -fsSL "https://nodejs.org/dist/v${version}/node-v${version}-linux-x64.tar.xz" | tar -xJ -C "$dir" --strip-components=1 \
+   && touch "${dir}.complete" \
+   || exit 1; \
+    done \
+ && chown -R runner:runner /opt/hostedtoolcache
+
 WORKDIR /home/runner/actions-runner
 RUN curl -fsSL -o runner.tar.gz \
       "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \

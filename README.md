@@ -29,7 +29,7 @@ Self-hosted раннеры GitHub Actions для приватных репози
 | Путь | Назначение |
 |---|---|
 | `config/defaults.env` | Общие настройки: организация, метка, версия Sysbox и значения по умолчанию |
-| `image/` | Образ раннера: Ubuntu 24.04, Docker, .NET 9 и 10, Node 24, `gh`, `shellcheck` и т. п. |
+| `image/` | Образ раннера: Ubuntu 24.04, Docker, .NET 9 и 10, Node 24 (и Node 22 и 24 в кэше `setup-node`), `gh`, `shellcheck` и т. п. |
 | `host/` | Скрипты и unit'ы хоста, в том числе `bootstrap-remote.sh` для начальной настройки |
 | `scripts/` | Команды для ПК администратора, на PowerShell и bash |
 | `.github/workflows/deploy.yml` | Деплой и статус хоста из Actions |
