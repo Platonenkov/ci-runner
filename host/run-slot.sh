@@ -30,6 +30,14 @@ if [[ -z "$jit" || "$jit" == "null" ]]; then
   exit 1
 fi
 
+# The NuGet package folder is shared by every slot and kept between jobs, so a restore downloads only what is new.
+# Workflows skip actions/cache on this runner: that cache lives in Azure Blob Storage, which some hosting networks
+# reach at a fraction of their bandwidth. NuGet guards each package extraction with a lock file, so two slots
+# restoring at once is safe. Sysbox maps the host owner straight through, so uid 1001 here is runner inside.
+nuget_volume=ci-nuget
+docker volume create "$nuget_volume" >/dev/null
+chown 1001:1001 "$(docker volume inspect -f '{{.Mountpoint}}' "$nuget_volume")"
+
 docker rm -f "ci-${slot}" >/dev/null 2>&1 || true
 exec docker run --rm \
   --name "ci-${slot}" \
@@ -38,6 +46,7 @@ exec docker run --rm \
   --memory "$SLOT_MEMORY" \
   --memory-swap "$SLOT_MEMORY" \
   -v "ci-${slot}-docker:/var/lib/docker" \
+  -v "${nuget_volume}:/home/runner/.nuget/packages" \
   -e RUNNER_JITCONFIG="$jit" \
   -e DOCKER_CACHE_LIMIT_MB="$DOCKER_CACHE_LIMIT_MB" \
   -e JOB_TIMEOUT_MINUTES="${JOB_TIMEOUT_MINUTES:-120}" \

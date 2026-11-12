@@ -13,6 +13,10 @@ Self-hosted раннеры GitHub Actions для приватных репози
   Параллельные job'ы не делят порты, сети и compose-проекты.
 - Docker-кэш образов слота (`/var/lib/docker`) живёт в томе `ci-<N>-docker` между job'ами. Контейнеры, сети и
   тома прошлого job'а удаляются при старте следующего. Если кэш больше `DOCKER_CACHE_LIMIT_MB`, он очищается.
+- Пакеты NuGet (`~/.nuget/packages`) лежат в томе `ci-nuget`, общем для всех слотов хоста, и сохраняются между
+  job'ами. Шаг `actions/cache` для NuGet в workflow на этом раннере не нужен: его кэш хранится в Azure Blob Storage,
+  до которого у части хостингов низкая скорость. Пропускать его можно условием
+  `if: runner.environment == 'github-hosted'`.
 - Job дольше `JOB_TIMEOUT_MINUTES` (по умолчанию 120 минут, `config/defaults.env`) раннер завершает сам, и GitHub
   показывает его упавшим. Без этого зависший шаг держит слот до шести часов: столько GitHub ждёт job'а без
   собственного `timeout-minutes`.
