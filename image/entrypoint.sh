@@ -37,6 +37,11 @@ if (( used_mb > cache_limit_mb )); then
   docker builder prune -af >/dev/null
 fi
 
+# Docker creates the parents of the shared ~/.nuget/packages mount as root, and NuGet then cannot write its
+# config to ~/.nuget/NuGet ("Access to the path '/home/runner/.nuget/NuGet' is denied").
+install -d -o runner -g runner /home/runner/.nuget
+chown runner:runner /home/runner/.nuget
+
 job_timeout_minutes="${JOB_TIMEOUT_MINUTES:-120}"
 
 # A job without timeout-minutes gets GitHub's default of six hours, so one step stuck on a dead download holds the
