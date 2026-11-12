@@ -34,6 +34,15 @@ EOF
   apparmor_parser -r /etc/apparmor.d/fusermount3
 fi
 
+# The stock chrony config steps the clock only during its first three updates and slews afterwards. When the
+# provider pauses the VM, the clock falls behind by the length of the pause (85 minutes once), the runner's
+# signed tokens are rejected and every slot exits with "registration has been deleted" until a slew catches up
+# hours later. Stepping on any offset over a second recovers within one poll.
+if [[ -d /etc/chrony/conf.d ]]; then
+  echo 'makestep 1 -1' > /etc/chrony/conf.d/ci-runner.conf
+  systemctl restart chrony
+fi
+
 if ! command -v docker >/dev/null 2>&1; then
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
