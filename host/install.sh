@@ -24,6 +24,16 @@ apt-get update -q
 # container fails with "failed to pre-register with sysbox-fs".
 apt-get install -y -q ca-certificates curl jq gnupg rsync fuse3
 
+# Ubuntu 24.10 and later confine fusermount3 with an AppArmor profile that allows mounts only under home, /mnt,
+# /media and /tmp; sysbox-fs mounts under /var/lib/sysboxfs and gets "fusermount3: mount failed: Permission denied".
+if [[ -f /etc/apparmor.d/fusermount3 ]]; then
+  cat > /etc/apparmor.d/local/fusermount3 <<'EOF'
+mount fstype=@{fuse_types} options=(nosuid,nodev) options in (ro,rw,noatime,dirsync,nodiratime,noexec,sync) -> /var/lib/sysboxfs/**/,
+umount /var/lib/sysboxfs/**/,
+EOF
+  apparmor_parser -r /etc/apparmor.d/fusermount3
+fi
+
 if ! command -v docker >/dev/null 2>&1; then
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
