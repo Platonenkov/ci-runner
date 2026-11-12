@@ -55,7 +55,9 @@ watch_job() {
     worker="$(pgrep -f -o 'bin/Runner.Worker' || true)"
     [[ -n "$worker" ]] || continue
     age="$(ps -o etimes= -p "$worker" | tr -d ' ')"
-    [[ -n "$age" ]] && (( age > limit )) || continue
+    if [[ -z "$age" ]] || (( age <= limit )); then
+      continue
+    fi
     echo "Job exceeded JOB_TIMEOUT_MINUTES=${job_timeout_minutes}, killing the runner worker." >&2
     pkill -KILL -f 'bin/Runner.Worker' || true
     sleep 120
