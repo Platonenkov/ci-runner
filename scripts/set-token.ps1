@@ -33,7 +33,7 @@ try {
     if (-not $token) { throw 'Empty token.' }
     # Single quotes on the remote side: Windows PowerShell 5.1 drops embedded double quotes when it builds a native
     # command line, and tr would then strip the letters r and n from the token.
-    $token | ssh $target 'install -d -m 0700 /etc/ci-runner && tr -d ''\r\n'' | sed ''1s/^\xEF\xBB\xBF//'' | install -m 0600 /dev/stdin /etc/ci-runner/token'
+    $token | ssh $target 'install -d -m 0700 /etc/ci-runner && tr -d ''\r\n'' | sed ''1s/^\xEF\xBB\xBF//'' | { umask 077 && cat > /etc/ci-runner/token.tmp && mv -f /etc/ci-runner/token.tmp /etc/ci-runner/token; }'
     if ($LASTEXITCODE -ne 0) { throw "ssh failed ($LASTEXITCODE)" }
 } finally {
     [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)

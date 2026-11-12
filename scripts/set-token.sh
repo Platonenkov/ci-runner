@@ -13,5 +13,5 @@ read -rsp "Fine-grained token (organization permission Self-hosted runners: read
 echo
 [[ -n "$token" ]] || { echo "Empty token." >&2; exit 1; }
 printf '%s' "$token" \
-  | ssh "${SSH_USER:-root}@${host}" 'install -d -m 0700 /etc/ci-runner && install -m 0600 /dev/stdin /etc/ci-runner/token'
+  | ssh "${SSH_USER:-root}@${host}" 'install -d -m 0700 /etc/ci-runner && { umask 077 && cat > /etc/ci-runner/token.tmp && mv -f /etc/ci-runner/token.tmp /etc/ci-runner/token; }'
 echo "Token stored on ${host}."

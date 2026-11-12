@@ -91,10 +91,10 @@ jobs:
                 echo "${name}=${!name}"
               fi
             done
-          } | ssh runner-host 'install -d -m 0700 /etc/ci-runner && install -m 0600 /dev/stdin /etc/ci-runner/runner.env'
+          } | ssh runner-host 'install -d -m 0700 /etc/ci-runner && { umask 077 && cat > /etc/ci-runner/runner.env.tmp && mv -f /etc/ci-runner/runner.env.tmp /etc/ci-runner/runner.env; }'
           if [ -n "$RUNNER_TOKEN" ]; then
             printf '%s' "$RUNNER_TOKEN" | sed '1s/^\xEF\xBB\xBF//' | tr -d '\r\n' \
-              | ssh runner-host 'install -m 0600 /dev/stdin /etc/ci-runner/token'
+              | ssh runner-host '{ umask 077 && cat > /etc/ci-runner/token.tmp && mv -f /etc/ci-runner/token.tmp /etc/ci-runner/token; }'
           else
             echo "::warning::RUNNER_TOKEN is not set; the host is installed, but its slots do not start."
           fi

@@ -30,7 +30,7 @@ $target = "$SshUser@$($hostLine.Substring(5))"
 
 # The file is sourced by bash, and a CR would end up inside every value; PowerShell adds CRLF when piping to ssh.
 $config = ((Get-Content -ErrorAction Stop (Join-Path $root 'config/defaults.env')) + (Get-Content $serverEnv)) -join "`n"
-$config | ssh $target 'install -d -m 0700 /etc/ci-runner && tr -d ''\r'' | sed ''1s/^\xEF\xBB\xBF//'' | install -m 0600 /dev/stdin /etc/ci-runner/runner.env'
+$config | ssh $target 'install -d -m 0700 /etc/ci-runner && tr -d ''\r'' | sed ''1s/^\xEF\xBB\xBF//'' | { umask 077 && cat > /etc/ci-runner/runner.env.tmp && mv -f /etc/ci-runner/runner.env.tmp /etc/ci-runner/runner.env; }'
 if ($LASTEXITCODE -ne 0) { throw "Writing runner.env failed ($LASTEXITCODE)" }
 
 # The archive goes through a file: PowerShell 5.1 pipes text, not bytes, between native commands.
