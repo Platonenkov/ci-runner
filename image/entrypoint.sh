@@ -37,6 +37,31 @@ if (( used_mb > cache_limit_mb )); then
   docker builder prune -af >/dev/null
 fi
 
+job_timeout_minutes="${JOB_TIMEOUT_MINUTES:-120}"
+
+# A job without timeout-minutes gets GitHub's default of six hours, so one step stuck on a dead download holds the
+# slot that long. Counted from the start of Runner.Worker, not of the container: a slot may idle for hours before
+# a job arrives. SIGKILL rather than SIGTERM: on SIGTERM the worker cancels the job and it shows as cancelled; when
+# the worker dies, the listener reports the job as failed. If the listener itself hangs, it goes too.
+watch_job() {
+  local limit=$(( job_timeout_minutes * 60 )) worker age
+  while true; do
+    sleep 30
+    worker="$(pgrep -f -o 'bin/Runner.Worker' || true)"
+    [[ -n "$worker" ]] || continue
+    age="$(ps -o etimes= -p "$worker" | tr -d ' ')"
+    [[ -n "$age" ]] && (( age > limit )) || continue
+    echo "Job exceeded JOB_TIMEOUT_MINUTES=${job_timeout_minutes}, killing the runner worker." >&2
+    pkill -KILL -f 'bin/Runner.Worker' || true
+    sleep 120
+    pkill -KILL -f 'bin/Runner.Listener' || true
+    return
+  done
+}
+if (( job_timeout_minutes > 0 )); then
+  watch_job &
+fi
+
 cd /home/runner/actions-runner
 # sudo applies pam_umask, which with USERGROUPS_ENAB gives umask 0002; the hosted runner uses 0022, and tests
 # that check the mode of created files and directories fail on 0775 instead of 0755.

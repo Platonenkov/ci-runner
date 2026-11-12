@@ -40,4 +40,5 @@ exec docker run --rm \
   -v "ci-${slot}-docker:/var/lib/docker" \
   -e RUNNER_JITCONFIG="$jit" \
   -e DOCKER_CACHE_LIMIT_MB="$DOCKER_CACHE_LIMIT_MB" \
+  -e JOB_TIMEOUT_MINUTES="${JOB_TIMEOUT_MINUTES:-120}" \
   "$IMAGE"
