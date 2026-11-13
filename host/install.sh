@@ -89,7 +89,8 @@ ExecStartPre=-/opt/ci-runner/host/sysboxfs-cleanup.sh
 EOF
 
 install -d -m 0755 /opt/ci-runner
-rsync -a --delete "$src/image" "$src/host" /opt/ci-runner/
+# root runs these scripts, so root owns them; -a alone would keep the deploy checkout's uid.
+rsync -a --chown=root:root --delete "$src/image" "$src/host" /opt/ci-runner/
 chmod +x /opt/ci-runner/host/*.sh /opt/ci-runner/image/entrypoint.sh
 install -m 0644 "$src"/host/systemd/* /etc/systemd/system/
 systemctl daemon-reload
