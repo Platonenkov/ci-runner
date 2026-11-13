@@ -38,7 +38,32 @@ nuget_volume=ci-nuget
 docker volume create "$nuget_volume" >/dev/null
 chown 1001:1001 "$(docker volume inspect -f '{{.Mountpoint}}' "$nuget_volume")"
 
+# Logs how much memory the job used, to size SLOT_MEMORY from data. memory.peak covers the container's whole cgroup,
+# nested Docker and Testcontainers included, but counts page cache the kernel would reclaim before hitting the
+# limit; the largest sampled anon (process memory) is the part that cannot be reclaimed. The cgroup goes away with
+# the container, so the last read is the figure. The runner name matches runner_name in the GitHub jobs API, which
+# tells the repository and job.
+log_memory_peak() {
+  local id="" cgroup peak=0 anon anon_max=0
+  for _ in $(seq 1 60); do
+    id="$(docker inspect -f '{{.Id}}' "ci-${slot}" 2>/dev/null)" && break
+    sleep 1
+  done
+  [[ -n "$id" ]] || return 0
+  cgroup="/sys/fs/cgroup/system.slice/docker-${id}.scope"
+  while [[ -r "${cgroup}/memory.peak" ]]; do
+    peak="$(cat "${cgroup}/memory.peak" 2>/dev/null || echo "$peak")"
+    anon="$(awk '$1 == "anon" { print $2 }' "${cgroup}/memory.stat" 2>/dev/null || echo 0)"
+    if (( anon > anon_max )); then
+      anon_max=$anon
+    fi
+    sleep 5
+  done
+  echo "Memory of ${name}: peak $(( peak / 1048576 )) MB, anon max $(( anon_max / 1048576 )) MB, limit ${SLOT_MEMORY}"
+}
+
 docker rm -f "ci-${slot}" >/dev/null 2>&1 || true
+log_memory_peak &
 exec docker run --rm \
   --name "ci-${slot}" \
   --hostname "$name" \
