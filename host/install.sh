@@ -43,6 +43,19 @@ if [[ -d /etc/chrony/conf.d ]]; then
   systemctl restart chrony
 fi
 
+# unattended-upgrades runs needrestart, which restarted sysbox under two running jobs on 2026-11-13: their nested
+# Docker lost overlay mounts ("function not implemented"), and the new sysbox-fs could not start over the dead
+# containers' FUSE mounts, so every slot failed until the stale mounts were removed by hand. These daemons are
+# restarted only by install.sh or a reboot.
+if [[ -d /etc/needrestart/conf.d ]]; then
+  cat > /etc/needrestart/conf.d/ci-runner.conf <<'EOF'
+$nrconf{override_rc}{qr(^sysbox)} = 0;
+$nrconf{override_rc}{qr(^docker)} = 0;
+$nrconf{override_rc}{qr(^containerd)} = 0;
+$nrconf{override_rc}{qr(^ci-runner)} = 0;
+EOF
+fi
+
 if ! command -v docker >/dev/null 2>&1; then
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
@@ -65,6 +78,15 @@ if [[ "$installed_sysbox" != "${SYSBOX_VERSION}"* ]]; then
   apt-get install -y -q "$deb"
   rm -f "$deb"
 fi
+
+# A sysbox-fs that died with containers running leaves their FUSE mounts under /var/lib/sysboxfs, and the next one
+# times out on start over them; every slot then fails with "dial unix /run/sysbox/sysfs.sock: connection refused".
+# Nothing can be using those mounts once sysbox-fs is down, so they are dropped before it starts.
+install -d /etc/systemd/system/sysbox-fs.service.d
+cat > /etc/systemd/system/sysbox-fs.service.d/ci-runner.conf <<'EOF'
+[Service]
+ExecStartPre=-/opt/ci-runner/host/sysboxfs-cleanup.sh
+EOF
 
 install -d -m 0755 /opt/ci-runner
 rsync -a --delete "$src/image" "$src/host" /opt/ci-runner/
