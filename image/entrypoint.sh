@@ -30,7 +30,10 @@ fi
 docker ps -aq | xargs -r docker rm -f >/dev/null
 docker network prune -f >/dev/null
 docker volume prune -af >/dev/null
-used_mb="$(du -sxm /var/lib/docker | cut -f1)"
+# containerd removes the snapshots of the containers deleted above in the background, so du meets directories that
+# vanish under it and exits 1; under pipefail that killed the slot before it registered (77 of 87 failed starts in
+# one day). The total it prints is still right for the cache that stays.
+used_mb="$( { du -sxm /var/lib/docker 2>/dev/null || true; } | cut -f1)"
 if (( used_mb > cache_limit_mb )); then
   echo "Docker cache is ${used_mb} MB (limit ${cache_limit_mb} MB), pruning it."
   docker system prune -af --volumes >/dev/null
