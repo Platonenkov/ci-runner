@@ -56,6 +56,24 @@ $nrconf{override_rc}{qr(^ci-runner)} = 0;
 EOF
 fi
 
+# Slots may swap up to SLOT_MEMORY_SWAP - SLOT_MEMORY, which needs swap on the host; a VPS image usually has none.
+# Low swappiness keeps the host from swapping until a slot actually presses against its memory limit. An existing
+# /swapfile is left as it is, so changing HOST_SWAP_GB later means removing it by hand first.
+swap_gb="${HOST_SWAP_GB:-0}"
+if (( swap_gb > 0 )) && ! swapon --show=NAME --noheadings | grep -qx /swapfile; then
+  if [[ ! -f /swapfile ]]; then
+    fallocate -l "${swap_gb}G" /swapfile
+    chmod 0600 /swapfile
+    mkswap /swapfile >/dev/null
+  fi
+  swapon /swapfile
+  if ! grep -q '^/swapfile ' /etc/fstab; then
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  fi
+fi
+echo 'vm.swappiness = 10' > /etc/sysctl.d/90-ci-runner.conf
+sysctl -q -p /etc/sysctl.d/90-ci-runner.conf
+
 if ! command -v docker >/dev/null 2>&1; then
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc

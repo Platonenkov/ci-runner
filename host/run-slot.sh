@@ -44,7 +44,7 @@ chown 1001:1001 "$(docker volume inspect -f '{{.Mountpoint}}' "$nuget_volume")"
 # the container, so the last read is the figure. The runner name matches runner_name in the GitHub jobs API, which
 # tells the repository and job.
 log_memory_peak() {
-  local id="" cgroup peak=0 anon anon_max=0
+  local id="" cgroup peak=0 anon anon_max=0 swap swap_max=0
   for _ in $(seq 1 60); do
     id="$(docker inspect -f '{{.Id}}' "ci-${slot}" 2>/dev/null)" && break
     sleep 1
@@ -57,22 +57,32 @@ log_memory_peak() {
     if (( anon > anon_max )); then
       anon_max=$anon
     fi
+    swap="$(cat "${cgroup}/memory.swap.current" 2>/dev/null || echo 0)"
+    if (( swap > swap_max )); then
+      swap_max=$swap
+    fi
     sleep 5
   done
-  echo "Memory of ${name}: peak $(( peak / 1048576 )) MB, anon max $(( anon_max / 1048576 )) MB, limit ${SLOT_MEMORY}"
+  echo "Memory of ${name}: peak $(( peak / 1048576 )) MB, anon max $(( anon_max / 1048576 )) MB, swap max $(( swap_max / 1048576 )) MB, limit ${SLOT_MEMORY} / ${SLOT_MEMORY_SWAP:-$SLOT_MEMORY}"
 }
 
 docker rm -f "ci-${slot}" >/dev/null 2>&1 || true
 log_memory_peak &
-exec docker run --rm \
+logger_pid=$!
+# Not exec: when the unit's main process exits, systemd kills the rest of its cgroup, and the logger, still in its
+# five-second sleep, died before printing; most jobs had no memory line. It ends on its own once the cgroup is gone.
+status=0
+docker run --rm \
   --name "ci-${slot}" \
   --hostname "$name" \
   --runtime=sysbox-runc \
   --memory "$SLOT_MEMORY" \
-  --memory-swap "$SLOT_MEMORY" \
+  --memory-swap "${SLOT_MEMORY_SWAP:-$SLOT_MEMORY}" \
   -v "ci-${slot}-docker:/var/lib/docker" \
   -v "${nuget_volume}:/home/runner/.nuget/packages" \
   -e RUNNER_JITCONFIG="$jit" \
   -e DOCKER_CACHE_LIMIT_MB="$DOCKER_CACHE_LIMIT_MB" \
   -e JOB_TIMEOUT_MINUTES="${JOB_TIMEOUT_MINUTES:-120}" \
-  "$IMAGE"
+  "$IMAGE" || status=$?
+wait "$logger_pid" || true
+exit "$status"

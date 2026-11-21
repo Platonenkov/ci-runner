@@ -2,7 +2,7 @@ name: deploy
 
 # Deploys the runner host of one GitHub environment, or shows its status. Each host is an environment created by
 # scripts/bootstrap: secrets SSH_HOST, SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS and variables SLOTS, SLOT_MEMORY,
-# DOCKER_CACHE_LIMIT_MB. RUNNER_TOKEN is a repository secret, or an environment secret to override it per host.
+# DOCKER_CACHE_LIMIT_MB and optionally SLOT_MEMORY_SWAP. RUNNER_TOKEN is a repository secret, or an environment secret to override it per host.
 #
 # Runs on a GitHub-hosted runner: a host cannot deploy itself, and a public repository must never run on the
 # self-hosted runners. Only a manual run starts it, so a pull request from a fork never gets these secrets. The
@@ -80,13 +80,14 @@ jobs:
           RUNNER_TOKEN: ${{ secrets.RUNNER_TOKEN }}
           SLOTS: ${{ vars.SLOTS }}
           SLOT_MEMORY: ${{ vars.SLOT_MEMORY }}
+          SLOT_MEMORY_SWAP: ${{ vars.SLOT_MEMORY_SWAP }}
           DOCKER_CACHE_LIMIT_MB: ${{ vars.DOCKER_CACHE_LIMIT_MB }}
         run: |
           set -Eeuo pipefail
           {
             cat config/defaults.env
             echo "# Environment variables of ${GITHUB_REPOSITORY}, run ${GITHUB_RUN_ID}."
-            for name in SLOTS SLOT_MEMORY DOCKER_CACHE_LIMIT_MB; do
+            for name in SLOTS SLOT_MEMORY SLOT_MEMORY_SWAP DOCKER_CACHE_LIMIT_MB; do
               if [ -n "${!name}" ]; then
                 echo "${name}=${!name}"
               fi
