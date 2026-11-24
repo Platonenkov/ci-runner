@@ -77,24 +77,47 @@ if (-not $SkipHarden) {
 $nproc = [int] $facts['nproc']
 $memGb = [int] $facts['mem_gb']
 $diskGb = [int] $facts['disk_gb']
-# 7 GB per slot as on the hosted runner, about 2 GB for the host itself, and at least two vCPUs per slot.
-$slots = [Math]::Max(1, [Math]::Min([Math]::Floor(($memGb - 2) / 7), [Math]::Max(1, [Math]::Floor($nproc / 2))))
-# About 25 GB stay for the runner image and the system; half of the rest is split between the slot caches.
-$cacheMb = [Math]::Max(5000, [Math]::Min(25000, [Math]::Floor(($diskGb - 25) * 1000 / $slots / 2)))
-
-$serverEnv = @(
-    "# Written by scripts/bootstrap.ps1: $nproc vCPU, $memGb GB RAM, $diskGb GB free, $($facts['os']).",
-    "HOST=$Address",
-    "SLOTS=$slots",
-    'SLOT_MEMORY=7g',
-    "DOCKER_CACHE_LIMIT_MB=$cacheMb"
-) -join "`n"
-[IO.File]::WriteAllText((Join-Path $root "servers/$Name.env"), "$serverEnv`n")
 
 if (-not $Repo) {
     $origin = git -C $root remote get-url origin 2>$null
     if ($origin -match 'github\.com[:/](.+?)(\.git)?$') { $Repo = $Matches[1] }
 }
+
+# A host set up again (a reinstall, a new address) keeps what its environment was tuned to: a variable the
+# environment already has wins over the computed value and is not written again.
+$kept = @{}
+function Get-Existing([string] $VariableName) {
+    if (-not $Repo) { return $null }
+    $value = gh variable get $VariableName --env $Name -R $Repo 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $value) { return $null }
+    $kept[$VariableName] = $true
+    return "$value".Trim()
+}
+function Get-Note([string] $VariableName) {
+    if ($kept[$VariableName]) { return ' (kept from the environment)' }
+    return ''
+}
+
+# 7 GB per slot as on the hosted runner, about 2 GB for the host itself, and at least two vCPUs per slot.
+$slots = [Math]::Max(1, [Math]::Min([Math]::Floor(($memGb - 2) / 7), [Math]::Max(1, [Math]::Floor($nproc / 2))))
+$value = Get-Existing 'SLOTS'
+if ($value) { $slots = [int] $value }
+# About 25 GB stay for the runner image and the system; half of the rest is split between the slot caches.
+$cacheMb = [Math]::Max(5000, [Math]::Min(25000, [Math]::Floor(($diskGb - 25) * 1000 / $slots / 2)))
+$value = Get-Existing 'DOCKER_CACHE_LIMIT_MB'
+if ($value) { $cacheMb = $value }
+$slotMemory = '7g'
+$value = Get-Existing 'SLOT_MEMORY'
+if ($value) { $slotMemory = $value }
+
+$serverEnv = @(
+    "# Written by scripts/bootstrap.ps1: $nproc vCPU, $memGb GB RAM, $diskGb GB free, $($facts['os']).",
+    "HOST=$Address",
+    "SLOTS=$slots",
+    "SLOT_MEMORY=$slotMemory",
+    "DOCKER_CACHE_LIMIT_MB=$cacheMb"
+) -join "`n"
+[IO.File]::WriteAllText((Join-Path $root "servers/$Name.env"), "$serverEnv`n")
 
 Write-Host ''
 Write-Host "Host: $nproc vCPU, $memGb GB RAM, $diskGb GB free, $($facts['os']) -> SLOTS=$slots, DOCKER_CACHE_LIMIT_MB=$cacheMb"
@@ -103,9 +126,9 @@ Write-Host "GitHub environment '$Name' (repository $Repo, Settings > Environment
 Write-Host "  secret   SSH_HOST               $Address"
 Write-Host "  secret   SSH_PRIVATE_KEY        contents of $key"
 Write-Host "  secret   SSH_KNOWN_HOSTS        contents of $knownHosts"
-Write-Host "  variable SLOTS                  $slots"
-Write-Host '  variable SLOT_MEMORY            7g'
-Write-Host "  variable DOCKER_CACHE_LIMIT_MB  $cacheMb"
+Write-Host "  variable SLOTS                  $slots$(Get-Note 'SLOTS')"
+Write-Host "  variable SLOT_MEMORY            $slotMemory$(Get-Note 'SLOT_MEMORY')"
+Write-Host "  variable DOCKER_CACHE_LIMIT_MB  $cacheMb$(Get-Note 'DOCKER_CACHE_LIMIT_MB')"
 Write-Host 'Repository secret (once for all hosts):'
 Write-Host '  secret   RUNNER_TOKEN           fine-grained token, owner StaticBit-io, Self-hosted runners: Read and write'
 
@@ -125,10 +148,12 @@ if ($LASTEXITCODE -ne 0) { throw "Creating the environment failed ($LASTEXITCODE
 gh secret set SSH_HOST --env $Name -R $Repo --body $Address
 cmd /c "gh secret set SSH_PRIVATE_KEY --env $Name -R $Repo < `"$key`""
 cmd /c "gh secret set SSH_KNOWN_HOSTS --env $Name -R $Repo < `"$knownHosts`""
-gh variable set SLOTS --env $Name -R $Repo --body "$slots"
-gh variable set SLOT_MEMORY --env $Name -R $Repo --body '7g'
-gh variable set DOCKER_CACHE_LIMIT_MB --env $Name -R $Repo --body "$cacheMb"
-if ($LASTEXITCODE -ne 0) { throw "gh failed ($LASTEXITCODE)" }
+$variables = [ordered] @{ SLOTS = "$slots"; SLOT_MEMORY = $slotMemory; DOCKER_CACHE_LIMIT_MB = "$cacheMb" }
+foreach ($entry in $variables.GetEnumerator()) {
+    if ($kept[$entry.Key]) { continue }
+    gh variable set $entry.Key --env $Name -R $Repo --body $entry.Value
+    if ($LASTEXITCODE -ne 0) { throw "gh variable set $($entry.Key) failed ($LASTEXITCODE)" }
+}
 
 $hasToken = gh secret list -R $Repo --json name --jq '.[].name' 2>$null | Where-Object { $_ -eq 'RUNNER_TOKEN' }
 if (-not $hasToken) {

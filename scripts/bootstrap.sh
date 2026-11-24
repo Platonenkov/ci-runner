@@ -55,27 +55,45 @@ nproc="$(fact nproc)"
 mem_gb="$(fact mem_gb)"
 disk_gb="$(fact disk_gb)"
 os="$(fact os)"
+
+if [[ -z "$repo" ]]; then
+  repo="$(git -C "$root" remote get-url origin 2>/dev/null | sed -nE 's#.*github\.com[:/](.+)$#\1#; s#\.git$##p')"
+fi
+
+# A host set up again (a reinstall, a new address) keeps what its environment was tuned to: a variable the
+# environment already has wins over the computed value and is not written again.
+existing() {
+  [[ -n "$repo" ]] || return 0
+  gh variable get "$1" --env "$name" -R "$repo" 2>/dev/null || true
+}
+kept=" "
+is_kept() { [[ "$kept" == *" $1 "* ]]; }
+note() { if is_kept "$1"; then echo " (kept from the environment)"; fi; }
+
 # Same sizing rules as bootstrap.ps1: 7 GB per slot plus 2 GB for the host, two vCPUs per slot, and half of the
 # disk beyond 25 GB split between the slot caches, within 5-25 GB each.
 by_mem=$(( (mem_gb - 2) / 7 ))
 by_cpu=$(( nproc / 2 > 0 ? nproc / 2 : 1 ))
 slots=$(( by_mem < by_cpu ? by_mem : by_cpu ))
 (( slots >= 1 )) || slots=1
+value="$(existing SLOTS)"
+if [[ -n "$value" ]]; then slots="$value"; kept+="SLOTS "; fi
 cache_mb=$(( (disk_gb - 25) * 1000 / slots / 2 ))
 (( cache_mb <= 25000 )) || cache_mb=25000
 (( cache_mb >= 5000 )) || cache_mb=5000
+value="$(existing DOCKER_CACHE_LIMIT_MB)"
+if [[ -n "$value" ]]; then cache_mb="$value"; kept+="DOCKER_CACHE_LIMIT_MB "; fi
+slot_memory=7g
+value="$(existing SLOT_MEMORY)"
+if [[ -n "$value" ]]; then slot_memory="$value"; kept+="SLOT_MEMORY "; fi
 
 cat > "$root/servers/$name.env" <<EOF
 # Written by scripts/bootstrap.sh: $nproc vCPU, $mem_gb GB RAM, $disk_gb GB free, $os.
 HOST=$address
 SLOTS=$slots
-SLOT_MEMORY=7g
+SLOT_MEMORY=$slot_memory
 DOCKER_CACHE_LIMIT_MB=$cache_mb
 EOF
-
-if [[ -z "$repo" ]]; then
-  repo="$(git -C "$root" remote get-url origin 2>/dev/null | sed -nE 's#.*github\.com[:/](.+)$#\1#; s#\.git$##p')"
-fi
 
 cat <<EOF
 
@@ -85,9 +103,9 @@ GitHub environment '$name' (repository $repo, Settings > Environments):
   secret   SSH_HOST               $address
   secret   SSH_PRIVATE_KEY        contents of $key
   secret   SSH_KNOWN_HOSTS        contents of $known_hosts
-  variable SLOTS                  $slots
-  variable SLOT_MEMORY            7g
-  variable DOCKER_CACHE_LIMIT_MB  $cache_mb
+  variable SLOTS                  $slots$(note SLOTS)
+  variable SLOT_MEMORY            $slot_memory$(note SLOT_MEMORY)
+  variable DOCKER_CACHE_LIMIT_MB  $cache_mb$(note DOCKER_CACHE_LIMIT_MB)
 Repository secret (once for all hosts):
   secret   RUNNER_TOKEN           fine-grained token, owner StaticBit-io, Self-hosted runners: Read and write
 EOF
@@ -106,9 +124,9 @@ gh api -X PUT "repos/$repo/environments/$name" --silent
 printf '%s' "$address" | gh secret set SSH_HOST --env "$name" -R "$repo"
 gh secret set SSH_PRIVATE_KEY --env "$name" -R "$repo" < "$key"
 gh secret set SSH_KNOWN_HOSTS --env "$name" -R "$repo" < "$known_hosts"
-gh variable set SLOTS --env "$name" -R "$repo" --body "$slots"
-gh variable set SLOT_MEMORY --env "$name" -R "$repo" --body 7g
-gh variable set DOCKER_CACHE_LIMIT_MB --env "$name" -R "$repo" --body "$cache_mb"
+is_kept SLOTS || gh variable set SLOTS --env "$name" -R "$repo" --body "$slots"
+is_kept SLOT_MEMORY || gh variable set SLOT_MEMORY --env "$name" -R "$repo" --body "$slot_memory"
+is_kept DOCKER_CACHE_LIMIT_MB || gh variable set DOCKER_CACHE_LIMIT_MB --env "$name" -R "$repo" --body "$cache_mb"
 
 if ! gh secret list -R "$repo" --json name --jq '.[].name' | grep -qx RUNNER_TOKEN; then
   echo "RUNNER_TOKEN is not set yet: gh secret set RUNNER_TOKEN -R $repo  (gh asks for the value without echo)"

@@ -1,0 +1,116 @@
+name: watch
+
+# Every 15 minutes checks that the self-hosted runners of the organization are online, and sends a Telegram message
+# only when that changes: once when they all go offline, once when they are back. On 2026-11-24 the host hung for
+# two hours before anyone noticed.
+#
+# No run ever fails, because GitHub mails the owner of a failed scheduled run, every 15 minutes. The state travels
+# from run to run through the "offline" job instead: it runs only while the runners are offline, and the next run
+# reads whether it ran in the previous one. A run that cannot reach the API keeps the previous state.
+#
+# Secrets: RUNNER_TOKEN (already used by deploy; Self-hosted runners: Read is enough here), TELEGRAM_BOT_TOKEN and
+# TELEGRAM_CHAT_ID. Without the Telegram secrets the run only logs a warning.
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      online: ${{ steps.check.outputs.online }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the runners and notify on a change
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNNER_TOKEN: ${{ secrets.RUNNER_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -Eeuo pipefail
+          # shellcheck source=/dev/null
+          source config/defaults.env
+          label="${RUNNER_LABELS%%,*}"
+
+          # The previous finished run tells the last known state: its offline job succeeded only while offline.
+          was_online=true
+          previous="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/watch.yml/runs?status=completed&per_page=5" \
+            --jq "[.workflow_runs[] | select(.id != ${GITHUB_RUN_ID})][0].id // empty" || true)"
+          if [[ -n "$previous" ]]; then
+            offline_job="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${previous}/jobs" \
+              --jq '.jobs[] | select(.name == "offline") | .conclusion' || true)"
+            [[ "$offline_job" == "success" ]] && was_online=false
+          fi
+          echo "Previous state: online=${was_online} (run ${previous:-none})"
+
+          # A slot is briefly unregistered between two jobs, so the host counts as offline only when no runner with
+          # the label is online in three checks a minute apart.
+          count_online() {
+            printf 'header = "Authorization: Bearer %s"\n' "$RUNNER_TOKEN" | curl -fsS -K - \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/orgs/${ORG}/actions/runners?per_page=100" \
+              | jq --arg label "$label" '[.runners[] | select(.status == "online" and any(.labels[]; .name == $label))] | length'
+          }
+          online_count=""
+          for attempt in 1 2 3; do
+            if ! count="$(count_online)"; then
+              echo "::warning::The runners API did not answer; the state stays as it was."
+              echo "online=${was_online}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Check ${attempt}: ${count} runner(s) with label ${label} online"
+            online_count="$count"
+            (( count > 0 )) && break
+            (( attempt < 3 )) && sleep 60
+          done
+          is_online=true
+          (( online_count > 0 )) || is_online=false
+
+          notify() {
+            if [[ -z "$TELEGRAM_BOT_TOKEN" || -z "$TELEGRAM_CHAT_ID" ]]; then
+              echo "::warning::TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set; no message sent."
+              return 0
+            fi
+            # The bot token goes through curl's config on stdin, not on the command line.
+            printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN" | curl -fsS -o /dev/null -K - \
+              --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=$1"
+          }
+
+          state="$is_online"
+          if [[ "$is_online" != "$was_online" ]]; then
+            if [[ "$is_online" == true ]]; then
+              text="CI: раннеры ${label} снова в сети, онлайн ${online_count}. ${RUN_URL}"
+            else
+              text="CI: ни одного раннера ${label} в сети, задачи стоят в очереди. Проверьте хост. ${RUN_URL}"
+            fi
+            if notify "$text"; then
+              echo "State changed to online=${is_online}, message sent."
+            else
+              # Keeping the old state makes the next run try the message again.
+              echo "::warning::Telegram did not accept the message; the next run retries."
+              state="$was_online"
+            fi
+          fi
+          echo "online=${state}" >> "$GITHUB_OUTPUT"
+
+  offline:
+    needs: check
+    if: needs.check.outputs.online == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "The runners are offline; the next watch run reads this job as the current state."
