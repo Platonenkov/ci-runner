@@ -50,7 +50,8 @@ log_memory_peak() {
     sleep 1
   done
   [[ -n "$id" ]] || return 0
-  cgroup="/sys/fs/cgroup/system.slice/docker-${id}.scope"
+  # systemd reads the dash in ci-runner.slice as nesting, so the slice lives under ci.slice.
+  cgroup="/sys/fs/cgroup/ci.slice/ci-runner.slice/docker-${id}.scope"
   while [[ -r "${cgroup}/memory.peak" ]]; do
     peak="$(cat "${cgroup}/memory.peak" 2>/dev/null || echo "$peak")"
     anon="$(awk '$1 == "anon" { print $2 }' "${cgroup}/memory.stat" 2>/dev/null || echo 0)"
@@ -76,6 +77,7 @@ docker run --rm \
   --name "ci-${slot}" \
   --hostname "$name" \
   --runtime=sysbox-runc \
+  --cgroup-parent ci-runner.slice \
   --memory "$SLOT_MEMORY" \
   --memory-swap "${SLOT_MEMORY_SWAP:-$SLOT_MEMORY}" \
   -v "ci-${slot}-docker:/var/lib/docker" \

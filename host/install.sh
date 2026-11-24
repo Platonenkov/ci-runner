@@ -74,6 +74,21 @@ fi
 echo 'vm.swappiness = 10' > /etc/sysctl.d/90-ci-runner.conf
 sysctl -q -p /etc/sysctl.d/90-ci-runner.conf
 
+# On 2026-11-24 the host stopped answering SSH for hours with both slots near their limits: per-slot limits add up
+# to more than the host has, so together the slots could starve sshd and the daemons they depend on. All slots run
+# in this slice, whose cap leaves HOST_RESERVED_MEMORY_MB to the rest; at the cap the kernel reclaims and kills
+# inside the slice, never outside it.
+total_mb="$(awk '/^MemTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo)"
+slots_mb=$(( total_mb - ${HOST_RESERVED_MEMORY_MB:-3072} ))
+cat > /etc/systemd/system/ci-runner.slice <<EOF
+[Unit]
+Description=GitHub Actions runner slots
+
+[Slice]
+MemoryMax=${slots_mb}M
+MemorySwapMax=${swap_gb}G
+EOF
+
 if ! command -v docker >/dev/null 2>&1; then
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
