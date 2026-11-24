@@ -19,10 +19,13 @@ fi
 source "$env_file"
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -q
+# A freshly installed server runs unattended-upgrades within minutes of boot and holds the dpkg lock for a while;
+# apt waits for it instead of failing the deploy.
+apt_get() { apt-get -o DPkg::Lock::Timeout=900 "$@"; }
+apt_get update -q
 # fuse3: sysbox-fs mounts through fusermount3, and the Sysbox package does not depend on it; without it every
 # container fails with "failed to pre-register with sysbox-fs".
-apt-get install -y -q ca-certificates curl jq gnupg rsync fuse3
+apt_get install -y -q ca-certificates curl jq gnupg rsync fuse3
 
 # Ubuntu 24.10 and later confine fusermount3 with an AppArmor profile that allows mounts only under home, /mnt,
 # /media and /tmp; sysbox-fs mounts under /var/lib/sysboxfs and gets "fusermount3: mount failed: Permission denied".
@@ -96,8 +99,8 @@ if ! command -v docker >/dev/null 2>&1; then
   codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${codename} stable" \
     > /etc/apt/sources.list.d/docker.list
-  apt-get update -q
-  apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+  apt_get update -q
+  apt_get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin
 fi
 
 installed_sysbox="$(dpkg-query -W -f='${Version}' sysbox-ce 2>/dev/null || true)"
@@ -108,7 +111,7 @@ if [[ "$installed_sysbox" != "${SYSBOX_VERSION}"* ]]; then
   curl -fsSL -o "$deb" \
     "https://github.com/nestybox/sysbox/releases/download/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}.linux_amd64.deb"
   echo "${SYSBOX_SHA256}  ${deb}" | sha256sum -c -
-  apt-get install -y -q "$deb"
+  apt_get install -y -q "$deb"
   rm -f "$deb"
 fi
 
