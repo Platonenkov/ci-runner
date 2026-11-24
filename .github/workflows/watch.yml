@@ -14,6 +14,11 @@ on:
   schedule:
     - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
+    inputs:
+      test_message:
+        description: Also send a test message with the current state, to check the bot and the chat
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -40,6 +45,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TEST_MESSAGE: ${{ inputs.test_message || false }}
         run: |
           set -Eeuo pipefail
           # shellcheck source=/dev/null
@@ -89,6 +95,14 @@ jobs:
             printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN" | curl -fsS -o /dev/null -K - \
               --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=$1"
           }
+
+          if [[ "$TEST_MESSAGE" == true ]]; then
+            if notify "CI: проверка уведомлений, раннеров ${label} онлайн ${online_count}. ${RUN_URL}"; then
+              echo "Test message sent."
+            else
+              echo "::warning::Telegram did not accept the test message."
+            fi
+          fi
 
           state="$is_online"
           if [[ "$is_online" != "$was_online" ]]; then
